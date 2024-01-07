@@ -8,7 +8,7 @@
             $t('experiment.index.config.help.config')
           }}</SLHelp>
         </div>
-        <SLTable :column="column" :data="configs" widthInit />
+        <SLTable :column="column" :data="configs" flexable />
       </div>
       <div v-if="summaries?.length !== 0">
         <div class="flex items-center pb-4" v-if="summaries?.length !== 0">
@@ -17,7 +17,7 @@
             >{{ $t('experiment.index.config.help.summary') }}
           </SLHelp>
         </div>
-        <SLTable :column="column" :data="summaries" widthInit />
+        <SLTable :column="column" :data="summaries" flexable />
       </div>
     </div>
     <div class="w-full h-6"></div>
@@ -72,7 +72,7 @@ const experimentId = ref(useExperimentStroe().id)
 http
   .get(`/experiment/${experimentId.value}/summary`)
   .then(({ data }) => {
-    summaries.value = data.summaries || []
+    summaries.value = data.summaries || {}
   })
   .catch((error) => {
     console.error(error)

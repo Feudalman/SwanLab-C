@@ -67,17 +67,17 @@ const handleClick = () => {
 
 <style lang="scss" scoped>
 .sl-status-label {
-  @apply px-3 py-1 rounded-full text-sm text-center flex items-center;
+  @apply px-3 py-1 rounded-full text-sm text-center;
 }
 .stoped {
   @apply bg-negative-dimmest text-negative-default;
 }
 
 .finished {
-  @apply bg-positive-higher text-positive-dimmer;
+  @apply bg-positive-dimmest text-positive-higher;
 }
 
 .running {
-  @apply bg-primary-dimmest text-primary-default;
+  @apply bg-primary-dimmest text-primary-higher;
 }
 </style>

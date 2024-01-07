@@ -1,7 +1,13 @@
 <template>
-  <div class="p-6 flex flex-col gap-5 text-dimmer border-b">
-    <h1 class="text-2xl font-semibold text-default">{{ projectStore.name }}</h1>
-    <!-- <p>{{ projectStore.description }}</p> -->
+  <!-- 项目信息 -->
+  <div class="p-6 flex flex-col gap-5 text-dimmer border-b relative">
+    <!-- 删除项目 -->
+    <SLDelete class="absolute top-5 right-4" type="project" @confirm="deleteProject" :disabled="hasRunning" />
+    <div class="flex gap-3">
+      <h1 class="text-2xl font-semibold text-default">{{ projectStore.name }}</h1>
+      <ConfigEditor type="project" @modify="modifyProject" />
+    </div>
+    <p v-if="projectStore.description">{{ projectStore.description }}</p>
     <!-- 项目创建时间、最近运行的时间、总实验数量 -->
     <div class="w-80 flex flex-col gap-4">
       <div class="flex justify-between">
@@ -35,6 +41,7 @@
         {{ row.config[item.key] || '-' }}
       </template>
     </SLTable>
+    <EmptyTable v-else-if="experiments.length === 0" />
   </div>
 </template>
 
@@ -46,17 +53,32 @@
  **/
 import { useProjectStore } from '@swanlab-vue/store'
 import { formatTime } from '@swanlab-vue/utils/time'
-import { computed, ref } from 'vue'
+import { computed, ref, inject } from 'vue'
 import SLStatusLabel from '@swanlab-vue/components/SLStatusLabel.vue'
 import ExperimentName from './components/ExperimentName.vue'
 import { transTime, convertUtcToLocal } from '@swanlab-vue/utils/time'
 import { t } from '@swanlab-vue/i18n'
 import http from '@swanlab-vue/api/http'
+import ConfigEditor from '@swanlab-vue/components/config-editor/ConfigEditor.vue'
 import SLTable from '@swanlab-vue/components/table'
+import SLDelete from '@swanlab-vue/components/SLDelete.vue'
+import { message } from '@swanlab-vue/components/message'
+import EmptyTable from './components/EmptyTable.vue'
 
 const projectStore = useProjectStore()
+const experiments = computed(() => {
+  // 在最前面判断项目信息是否存在，不存在则是后端未开启/没有项目
+  if (typeof projectStore.experiments === 'undefined') {
+    show_error(3500)
+    return []
+  }
+  return projectStore.experiments
+})
+
+const show_error = inject('show_error')
 
 // ---------------------------------- 在此处处理项目创建时间、运行时间和总实验数量 ----------------------------------
+
 const createTime = computed(() => formatTime(projectStore.createTime))
 const updateTime = computed(() => formatTime(projectStore.updateTime))
 
@@ -67,7 +89,7 @@ const column = ref([
     title: t('home.list.table.header.name'),
     slot: 'name',
     style: 'px-4',
-    width: 200,
+    width: 300,
     border: true
   },
   {
@@ -80,11 +102,11 @@ const column = ref([
   }
 ])
 
-// 遍历 projectStore.experiments，添加配置
+// 遍历 experiments，添加配置
 const configs = []
 ;(() => {
   // 寻找需要增加的表头
-  projectStore.experiments.map((item) => {
+  experiments.value.map((item) => {
     Object.entries(item.config).forEach(([key]) => {
       // 如果这个key已经存在configs中，跳过
       if (configs.some((config) => config.title === key)) {
@@ -104,7 +126,7 @@ const configs = []
 
 // 表格体数据
 const experiments_table = computed(() => {
-  return projectStore.experiments.map((expr) => {
+  return experiments.value.map((expr) => {
     const summary = summaries.value[expr.name]
     if (!summary) return {}
     Promise.all(
@@ -125,7 +147,7 @@ http
       // 传递前端显示的所有实验名称，使用字符串格式，每个实验名称之间使用逗号连接
       experiment_names: (() => {
         let experiment_names = []
-        projectStore.experiments.forEach((experiment) => {
+        experiments.value.forEach((experiment) => {
           experiment_names.push(experiment.name)
         })
         return experiment_names.join(',')
@@ -157,6 +179,48 @@ async function hashString(inputString) {
   // return hashHex
   return 'swanlab-overview-table-key' + inputString
 }
+
+// ---------------------------------- 修改项目信息 ----------------------------------
+
+const modifyProject = async (newV, hideModal) => {
+  const { data } = await http.patch('/project/update', newV)
+  projectStore.setProject(data.project)
+  hideModal()
+}
+
+// ---------------------------------- 删除项目 ----------------------------------
+
+/**
+ * 是否可以删除项目
+ * 如果有实验正在进行中，直接不显示删除按钮
+ */
+const hasRunning = computed(() => {
+  for (const experiment of experiments.value) {
+    if (experiment.status === 0) return true
+  }
+  return false
+})
+
+/**
+ * 删除项目
+ *
+ * success：显示成功，清空状态，并显示空项目错误页
+ *
+ * fail：在有实验正在进行的时候删除项目
+ */
+const deleteProject = () => {
+  http
+    .delete('/project/delete')
+    .then(() => {
+      message.success('Delete Successfully')
+      projectStore.clearProject()
+      show_error(3500)
+    })
+    .catch(({ data }) => {
+      message.error('Error deleting project')
+      show_error(data.code, data.message)
+    })
+}
 </script>
 
 <style lang="scss" scoped>
@@ -164,7 +228,7 @@ async function hashString(inputString) {
   @apply border;
   tr {
     &:first-child {
-      @apply bg-dimmer;
+      @apply bg-higher;
     }
     &:not(:first-child) {
       @apply border-t;

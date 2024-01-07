@@ -8,17 +8,17 @@ r"""
     实验相关api，前缀：/experiment
 """
 from datetime import datetime
-from fastapi import APIRouter
-from ..module.resp import SUCCESS_200, NOT_FOUND_404
-from ...env import swc
+import shutil
+from fastapi import APIRouter, Request
+
+from ...utils.file import check_exp_name_format, check_desc_format
+from ..module.resp import SUCCESS_200, NOT_FOUND_404, PARAMS_ERROR_422, Conflict_409
 import os
 import ujson
-from ...utils import DEFAULT_COLOR
-
-# from ...utils import create_time
 from urllib.parse import quote, unquote  # 转码路径参数
 from typing import List, Dict
-from ...utils import get_a_lock, create_time
+from ..settings import PROJECT_PATH, SWANLOG_DIR
+from ...utils import get_a_lock, create_time, DEFAULT_COLOR
 from ...log import swanlog as swl
 
 router = APIRouter()
@@ -38,7 +38,7 @@ def __find_experiment(experiment_id: int) -> dict:
     dict
         实验信息
     """
-    with get_a_lock(swc.project, "r") as f:
+    with get_a_lock(PROJECT_PATH, "r") as f:
         experiments: list = ujson.load(f)["experiments"]
     for experiment in experiments:
         if experiment["experiment_id"] == experiment_id:
@@ -127,7 +127,7 @@ async def get_experiment(experiment_id: int):
         实验唯一id，路径传参
     """
     # 读取 project.json 文件内容
-    with get_a_lock(swc.project, "r") as f:
+    with get_a_lock(PROJECT_PATH, "r") as f:
         experiments: list = ujson.load(f)["experiments"]
     # 在experiments列表中查找对应实验的信息
     experiment = None
@@ -139,7 +139,7 @@ async def get_experiment(experiment_id: int):
     if experiment is None:
         return NOT_FOUND_404()
     # 生成实验存储路径
-    path = os.path.join(swc.root, experiment["name"], "logs")
+    path = os.path.join(SWANLOG_DIR, experiment["name"], "logs")
     experiment["tags"] = __list_subdirectories(path)
     experiment["default_color"] = DEFAULT_COLOR
     return SUCCESS_200(experiment)
@@ -165,7 +165,7 @@ async def get_tag_data(experiment_id: int, tag: str):
         return NOT_FOUND_404("experiment not found")
     # ---------------------------------- 前置处理 ----------------------------------
     # 获取tag对应的存储目录
-    tag_path: str = os.path.join(swc.root, experiment_name, "logs", tag)
+    tag_path: str = os.path.join(SWANLOG_DIR, experiment_name, "logs", tag)
     if not os.path.exists(tag_path):
         return NOT_FOUND_404("tag not found")
     # 获取目录下存储的所有数据
@@ -244,7 +244,7 @@ async def get_experiment_status(experiment_id: int):
     """
     exp = __find_experiment(experiment_id)
     status = exp["status"]
-    chart_path: str = os.path.join(swc.root, exp["name"], "chart.json")
+    chart_path: str = os.path.join(SWANLOG_DIR, exp["name"], "chart.json")
     charts = __get_charts(chart_path)
     return SUCCESS_200(data={"status": status, "charts": charts})
 
@@ -263,7 +263,7 @@ async def get_experiment_summary(experiment_id: int):
     array
         每个tag的最后一个数据
     """
-    experiment_path: str = os.path.join(swc.root, __find_experiment(experiment_id)["name"], "logs")
+    experiment_path: str = os.path.join(SWANLOG_DIR, __find_experiment(experiment_id)["name"], "logs")
     tags = [f for f in os.listdir(experiment_path) if os.path.isdir(os.path.join(experiment_path, f))]
     tags = [item for item in tags if item != "_summary.json"]
     summaries = []
@@ -272,7 +272,9 @@ async def get_experiment_summary(experiment_id: int):
         logs = sorted([item for item in os.listdir(tag_path) if item != "_summary.json"])
         with get_a_lock(os.path.join(tag_path, logs[-1]), mode="r") as f:
             data = ujson.load(f)
-            summaries.append({"key": unquote(tag), "value": data["data"][-1]["data"]})
+            # 保留4位有效数字
+            data = round(data["data"][-1]["data"], 4)
+            summaries.append({"key": unquote(tag), "value": data})
     return SUCCESS_200(data={"summaries": summaries})
 
 
@@ -290,7 +292,7 @@ async def get_recent_experiment_log(experiment_id: int):
     MAX_NUM : int
         最多返回这么多条
     """
-    console_path: str = os.path.join(swc.root, __find_experiment(experiment_id)["name"], "console")
+    console_path: str = os.path.join(SWANLOG_DIR, __find_experiment(experiment_id)["name"], "console")
     consoles: list = [f for f in os.listdir(console_path)]
     # 含有error.log，在返回值中带上其中的错误信息
     error = None
@@ -326,13 +328,13 @@ async def get_recent_experiment_log(experiment_id: int):
 
 @router.get("/{experiment_id}/chart")
 async def get_experimet_charts(experiment_id: int):
-    chart_path: str = os.path.join(swc.root, __find_experiment(experiment_id)["name"], "chart.json")
+    chart_path: str = os.path.join(SWANLOG_DIR, __find_experiment(experiment_id)["name"], "chart.json")
     chart = __get_charts(chart_path)
     return SUCCESS_200(chart)
 
 
 @router.get("/{experiment_id}/stop")
-async def get_stop_charts(experiment_id: int):
+async def stop_experiment(experiment_id: int):
     """停止实验
 
     Parameters
@@ -340,8 +342,7 @@ async def get_stop_charts(experiment_id: int):
     experiment_id : int
         实验唯一ID
     """
-    config_path: str = os.path.join(swc.root, "project.json")
-    with open(config_path, mode="r", encoding="utf-8") as f:
+    with open(PROJECT_PATH, mode="r", encoding="utf-8") as f:
         config = ujson.load(f)
     # 获取需要停止的实验在配置中的索引
     index = next((index for index, d in enumerate(config["experiments"]) if d["experiment_id"] == experiment_id), None)
@@ -351,6 +352,97 @@ async def get_stop_charts(experiment_id: int):
         return Exception("Experiment status is not running")
     config["experiments"][index]["status"] = -1
     config["experiments"][index]["update_time"] = create_time()
-    with get_a_lock(config_path, "w") as f:
+    with get_a_lock(PROJECT_PATH, "w") as f:
         ujson.dump(config, f, ensure_ascii=False, indent=4)
     return SUCCESS_200({"update_time": create_time()})
+
+
+@router.patch("/{experiment_id}")
+async def update_experiment_config(experiment_id: int, request: Request):
+    """修改实验的元信息
+
+    Parameters
+    ----------
+    experiment_id : int
+        实验id
+    body : Body
+        name: str
+            实验名称
+        description: str
+            实验描述
+
+    Returns
+    -------
+    object
+    """
+    body: dict = await request.json()
+    # 校验参数
+    check_exp_name_format(body["name"], False)
+    body["description"] = check_desc_format(body["description"], False)
+
+    with open(PROJECT_PATH, "r") as f:
+        project = ujson.load(f)
+    experiment = __find_experiment(experiment_id)
+    # 寻找实验在列表中对应的 index
+    experiment_index = project["experiments"].index(experiment)
+
+    # 修改实验名称
+    if not experiment["name"] == body["name"]:
+        # 修改实验名称
+        if not experiment["name"] == body["name"]:
+            # 检测实验名是否重复
+            for expr in project["experiments"]:
+                if expr["name"] == body["name"]:
+                    return PARAMS_ERROR_422("Experiment's target name already exists")
+        project["experiments"][experiment_index]["name"] = body["name"]
+        # 修改实验目录名
+        old_path = os.path.join(SWANLOG_DIR, experiment["name"])
+        new_path = os.path.join(SWANLOG_DIR, body["name"])
+        os.rename(old_path, new_path)
+
+    # 修改实验描述
+    if not experiment["description"] == body["description"]:
+        project["experiments"][experiment_index]["description"] = body["description"]
+    with get_a_lock(PROJECT_PATH, "w") as f:
+        ujson.dump(project, f, indent=4, ensure_ascii=False)
+
+    return SUCCESS_200({"experiment": project["experiments"][experiment_index]})
+
+
+@router.delete("/{experiment_id}")
+async def delete_experiment(experiment_id: int):
+    """删除实验
+
+    注意，需要先判断当前实验是否正在运行中，不可删除运行中的实验
+
+    Parameters
+    ----------
+    experiment_id : Int
+        实验唯一ID
+
+    Returns
+    -------
+    project : Dictionary
+        删除实验后的项目信息，提供给前端更新界面
+    """
+    experiment: dict = __find_experiment(experiment_id)
+
+    # 判断状态，运行中则不可删除
+    if experiment["status"] == 0:
+        return Conflict_409("Can't delete experiment since experiment is running")
+
+    # 可以删除
+    # 1. 删除 project.json 中的实验记录
+    with get_a_lock(PROJECT_PATH) as f:
+        project: dict
+        with open(PROJECT_PATH, "r") as file_read:
+            project = ujson.load(file_read)
+            # project["_sum"] = project["_sum"] - 1
+            project["experiments"].remove(experiment)
+
+        with open(PROJECT_PATH, "w") as file_write:
+            ujson.dump(project, file_write, indent=4, ensure_ascii=False)
+    # 2. 删除实验目录
+    shutil.rmtree(os.path.join(SWANLOG_DIR, experiment["name"]))
+
+    return SUCCESS_200({"project": project})

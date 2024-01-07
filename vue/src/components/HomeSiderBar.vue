@@ -22,8 +22,9 @@
     <!-- 概览区域 -->
     <div class="p-4 flex flex-col border-b">
       <RouterLink to="/" active-class="active-router">
-        <SLIcon icon="home" class="w-4 h-4 mr-2" />
-        <span>{{ $t('sider.nav.home') }}</span>
+        <SLIcon icon="dashboard" class="w-4 h-4 mr-2" />
+        <!-- <span>{{ $t('sider.nav.home') }}</span> -->
+        <span>Project Dashboard</span>
       </RouterLink>
     </div>
     <!-- 实验路由 -->
@@ -33,11 +34,12 @@
         v-for="experiment in projectStore.experiments"
         :key="experiment.experiment_id"
         :to="getExperimentRouter(experiment)"
+        :title="experiment.name"
         class="flex-shrink-0"
         active-class="active-router"
       >
         <div class="w-4 h-4 rounded-full mr-3" :style="{ backgroundColor: experiment.color }"></div>
-        {{ experiment.name }}
+        <span class="truncate">{{ experiment.name }}</span>
       </RouterLink>
     </div>
     <div class="border-t border-default h-20">
@@ -95,11 +97,11 @@ const query = ref([])
 }
 
 a {
-  @apply flex items-center px-4 h-11 text-sm text-default hover:bg-positive-highest rounded-lg;
+  @apply flex items-center px-4 h-11 text-sm text-default hover:bg-positive-dimmest rounded-lg;
 }
 
 .active-router {
-  @apply bg-positive-highest text-positive-dimmer;
+  @apply bg-positive-dimmest text-positive-higher;
 }
 
 .experiments-container {
