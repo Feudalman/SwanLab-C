@@ -1,0 +1,25 @@
+name: Publish to PyPI
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Tests and Generate lcov File
+        run: |
+          swift test --enable-code-coverage
+          xcrun llvm-cov report $BUILD_FOLDER -instr-profile $PROFDATA_FOLDER
+          xcrun llvm-cov export -format="lcov" $BUILD_FOLDER -instr-profile $PROFDATA_FOLDER > $LCOV_PATH
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v3
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
